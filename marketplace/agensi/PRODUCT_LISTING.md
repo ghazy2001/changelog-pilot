@@ -3,7 +3,7 @@
 ## 1. Product Overview
 * **Product Title**: Changelog Pilot — AI Release Notes, SemVer Bumper & Automated Changelogs
 * **Short Tagline**: Automate git changelog generation, SemVer recommendations, CHANGELOG.md file updates, and omnichannel release announcements across Claude Code, Cursor, and terminal.
-* **Suggested Price**: $14.00 (within the optimal $10–$30 single-skill range suggested by Agensi)
+* **Suggested Price**: $10.00
 * **Categories**: Developer Tooling, Release Automation, Git Workflows, Documentation
 * **Compatible Agents**: Claude Code, Cursor, Antigravity, Windsurf, GitHub Copilot, Cline, Roo Code
 
