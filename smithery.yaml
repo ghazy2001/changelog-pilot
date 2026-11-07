@@ -1,0 +1,19 @@
+name: changelog-pilot
+version: 1.0.0
+description: AI-powered changelog, release notes & semantic versioning MCP server for coding agents.
+homepage: https://github.com/ghazy2001/changelog-pilot
+repository: https://github.com/ghazy2001/changelog-pilot
+license: MIT
+author:
+  name: Mahmoud Ghazy
+  url: https://github.com/ghazy2001
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties: {}
+  command: npx
+  args:
+    - -y
+    - changelog-pilot

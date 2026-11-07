@@ -1,0 +1,53 @@
+{
+  "name": "changelog-pilot",
+  "version": "1.0.0",
+  "description": "AI-powered changelog, release notes & version management — MCP server for coding agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "changelog-pilot": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "changelog",
+    "release-notes",
+    "git",
+    "conventional-commits",
+    "semver",
+    "semantic-versioning",
+    "ai-agent",
+    "developer-tools"
+  ],
+  "author": "Mahmoud Ghazy <ghazy2001@users.noreply.github.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ghazy2001/changelog-pilot.git"
+  },
+  "homepage": "https://github.com/ghazy2001/changelog-pilot#readme",
+  "bugs": {
+    "url": "https://github.com/ghazy2001/changelog-pilot/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
