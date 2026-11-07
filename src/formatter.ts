@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ParsedCommit, CommitGroup } from './parser.js';
 
 export type ChangelogFormat = 'keepachangelog' | 'github' | 'simple';
@@ -49,9 +51,7 @@ function normaliseRepoUrl(url: string): string {
   let normalised = url.trim().replace(/\/+$/, '').replace(/\.git$/, '');
 
   // SSH → HTTPS
-  const sshMatch = normalised.match(
-    /^git@([^:]+):(.+)$/,
-  );
+  const sshMatch = normalised.match(/^git@([^:]+):(.+)$/);
   if (sshMatch) {
     normalised = `https://${sshMatch[1]}/${sshMatch[2]}`;
   }
@@ -76,13 +76,25 @@ function commitRef(
 }
 
 /**
- * Format a single commit line with optional scope emphasis.
+ * Auto-link PR and issue numbers e.g. #123 to GitHub PR/issue URLs.
+ */
+function linkIssues(text: string, repoUrl?: string | null): string {
+  if (!repoUrl) return text;
+  const base = normaliseRepoUrl(repoUrl);
+  return text.replace(/(?<!\[)#(\d+)(?!\])/g, `[#$1](${base}/pull/$1)`);
+}
+
+/**
+ * Format a single commit line with optional scope emphasis and links.
  */
 function commitLine(
   commit: ParsedCommit,
   opts?: { bold?: boolean; repoUrl?: string | null },
 ): string {
-  const subject = commit.subject ?? commit.header ?? '';
+  let subject = commit.subject ?? commit.header ?? '';
+  if (opts?.repoUrl) {
+    subject = linkIssues(subject, opts.repoUrl);
+  }
   const scope = commit.scope;
   const ref = commitRef(commit, opts?.repoUrl);
 
@@ -119,7 +131,8 @@ export function formatKeepAChangelog(opts: {
     lines.push('### ⚠ BREAKING CHANGES');
     lines.push('');
     for (const commit of breaking) {
-      const body = commit.breakingBody ?? commit.subject ?? commit.header ?? '';
+      let body = commit.breakingBody ?? commit.subject ?? commit.header ?? '';
+      if (repoUrl) body = linkIssues(body, repoUrl);
       lines.push(`- ${body}${commitRef(commit, repoUrl)}`);
     }
     lines.push('');
@@ -164,8 +177,9 @@ export function formatGitHubRelease(opts: {
   groups: CommitGroup[];
   breaking: ParsedCommit[];
   contributors?: string[];
+  repoUrl?: string | null;
 }): string {
-  const { version, groups, breaking, contributors } = opts;
+  const { version, groups, breaking, contributors, repoUrl } = opts;
   const lines: string[] = [];
 
   lines.push(`# 🚀 ${version}`);
@@ -176,7 +190,8 @@ export function formatGitHubRelease(opts: {
     lines.push('## ⚠️ Breaking Changes');
     lines.push('');
     for (const commit of breaking) {
-      const body = commit.breakingBody ?? commit.subject ?? commit.header ?? '';
+      let body = commit.breakingBody ?? commit.subject ?? commit.header ?? '';
+      if (repoUrl) body = linkIssues(body, repoUrl);
       lines.push(`- ${body}`);
     }
     lines.push('');
@@ -189,7 +204,7 @@ export function formatGitHubRelease(opts: {
     lines.push(`## ${heading}`);
     lines.push('');
     for (const commit of group.commits) {
-      lines.push(`- ${commitLine(commit, { bold: true })}`);
+      lines.push(`- ${commitLine(commit, { bold: true, repoUrl })}`);
     }
     lines.push('');
   }
@@ -319,7 +334,7 @@ function formatDiscord(opts: {
   lines.push('');
 
   if (highlights.length > 0) {
-    lines.push('**Highlights**');
+    lines.push('### Highlights');
     for (const h of highlights) {
       lines.push(`- ${h}`);
     }
@@ -336,43 +351,43 @@ function formatDiscord(opts: {
   }
 
   if (url) {
-    lines.push(`📋 Full changelog: < ${url} >`);
+    lines.push(`[Full Changelog](<${url}>)`);
   }
 
   return lines.join('\n').trimEnd() + '\n';
 }
 
-// -- Twitter ----------------------------------------------------------------
+// -- Twitter / X ------------------------------------------------------------
 
 function formatTwitter(opts: {
   version: string;
   productName: string;
   highlights: string[];
-  breaking: ParsedCommit[];
   url?: string;
 }): string {
   const { version, productName, highlights, url } = opts;
+  const lines: string[] = [];
 
-  // Build tweet under 280 chars
-  let tweet = `✨ ${productName} ${version} is here!\n\n`;
+  lines.push(`🚀 ${productName} ${version} is live!`);
+  lines.push('');
 
-  const maxHighlights = Math.min(highlights.length, 3);
-  for (let i = 0; i < maxHighlights; i++) {
-    const bullet = `• ${highlights[i]}\n`;
-    if (tweet.length + bullet.length > (url ? 250 : 278)) break;
-    tweet += bullet;
+  const topHighlights = highlights.slice(0, 3);
+  for (const h of topHighlights) {
+    lines.push(`✨ ${h}`);
   }
 
   if (url) {
-    tweet += `\n${url}`;
+    lines.push('');
+    lines.push(url);
   }
 
-  // Final truncation safety
-  if (tweet.length > 280) {
-    tweet = tweet.slice(0, 277) + '...';
+  let result = lines.join('\n');
+  if (result.length > 280) {
+    const withoutUrl = lines.slice(0, -2).join('\n');
+    result = withoutUrl.length <= 280 ? withoutUrl : withoutUrl.slice(0, 277) + '...';
   }
 
-  return tweet.trimEnd() + '\n';
+  return result;
 }
 
 // -- Email ------------------------------------------------------------------
@@ -428,4 +443,48 @@ function formatEmail(opts: {
   lines.push(`The ${productName} Team`);
 
   return lines.join('\n').trimEnd() + '\n';
+}
+
+// ---------------------------------------------------------------------------
+// File Updater
+// ---------------------------------------------------------------------------
+
+/**
+ * Prepend or create a changelog entry in the project's CHANGELOG.md file.
+ */
+export function updateChangelogFile(opts: {
+  cwd?: string;
+  changelogContent: string;
+  filePath?: string;
+}): { filePath: string; isNew: boolean } {
+  const cwd = opts.cwd ? resolve(opts.cwd) : process.cwd();
+  const targetPath = resolve(cwd, opts.filePath ?? 'CHANGELOG.md');
+
+  const header = '# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n';
+
+  if (!existsSync(targetPath)) {
+    const full = `${header}${opts.changelogContent.trim()}\n`;
+    writeFileSync(targetPath, full, 'utf-8');
+    return { filePath: targetPath, isNew: true };
+  }
+
+  const existing = readFileSync(targetPath, 'utf-8');
+  let updated: string;
+
+  // Check if existing file has standard header
+  if (existing.startsWith('# Changelog')) {
+    const firstSectionIdx = existing.indexOf('\n## ');
+    if (firstSectionIdx !== -1) {
+      const top = existing.slice(0, firstSectionIdx + 1);
+      const rest = existing.slice(firstSectionIdx + 1);
+      updated = `${top}${opts.changelogContent.trim()}\n\n${rest}`;
+    } else {
+      updated = `${existing.trimEnd()}\n\n${opts.changelogContent.trim()}\n`;
+    }
+  } else {
+    updated = `${opts.changelogContent.trim()}\n\n${existing}`;
+  }
+
+  writeFileSync(targetPath, updated, 'utf-8');
+  return { filePath: targetPath, isNew: false };
 }

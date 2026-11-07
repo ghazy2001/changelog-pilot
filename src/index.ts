@@ -22,8 +22,98 @@ import {
   formatGitHubRelease,
   formatSimple,
   formatAnnouncement,
+  updateChangelogFile,
 } from './formatter.js';
 import type { ChangelogFormat, AnnouncementPlatform } from './formatter.js';
+
+// ---------------------------------------------------------------------------
+// CLI Mode (if run directly in terminal with arguments)
+// ---------------------------------------------------------------------------
+
+const cliArgs = process.argv.slice(2);
+
+if (cliArgs.includes('--help') || cliArgs.includes('-h')) {
+  console.log(`
+🚀 Changelog Pilot — AI-Powered Git Changelog, Release Notes & SemVer MCP Server
+
+Usage:
+  npx changelog-pilot                  Run as Model Context Protocol (MCP) server (stdio)
+  npx changelog-pilot --preview        Print changelog preview for current repo
+  npx changelog-pilot --suggest        Suggest next semantic version
+  npx changelog-pilot --write          Generate & update CHANGELOG.md file
+  npx changelog-pilot --version        Display changelog-pilot version
+`);
+  process.exit(0);
+}
+
+if (cliArgs.includes('--version') || cliArgs.includes('-v')) {
+  console.log('changelog-pilot v1.0.0');
+  process.exit(0);
+}
+
+if (cliArgs.includes('--suggest')) {
+  const cwd = process.cwd();
+  const raw = getGitLog({ cwd, to: 'HEAD' });
+  const parsed = raw.map(parseCommit);
+  const suggestion = suggestVersion({ commits: parsed });
+  console.log(`Current:   ${suggestion.current}`);
+  console.log(`Suggested: ${suggestion.suggested} (${suggestion.bump})`);
+  console.log(`Reason:    ${suggestion.reason}`);
+  process.exit(0);
+}
+
+if (cliArgs.includes('--preview')) {
+  const cwd = process.cwd();
+  const from = getLatestTag(cwd) ?? undefined;
+  let raw = getGitLog({ cwd, from, to: 'HEAD' });
+  if (raw.length === 0 && from) {
+    console.log(`ℹ️ No new commits since tag ${from}. Showing latest commits preview:`);
+    raw = getGitLog({ cwd, to: 'HEAD', maxCount: 15 });
+  }
+  const parsed = raw.map(parseCommit);
+  const groups = groupCommits(parsed);
+  const breaking = getBreakingChanges(parsed);
+  const ver = suggestVersion({ commits: parsed, currentVersion: from ?? '0.0.0' }).version;
+  const repoUrl = getRepoRemoteUrl(cwd);
+  const md = formatKeepAChangelog({
+    version: ver,
+    date: new Date().toISOString().slice(0, 10),
+    groups,
+    breaking,
+    repoUrl,
+  });
+  console.log(md);
+  process.exit(0);
+}
+
+if (cliArgs.includes('--write')) {
+  const cwd = process.cwd();
+  const from = getLatestTag(cwd) ?? undefined;
+  const raw = getGitLog({ cwd, from, to: 'HEAD' });
+  if (raw.length === 0 && from) {
+    console.log(`ℹ️ No new commits since tag ${from}. Nothing to update.`);
+    process.exit(0);
+  }
+  const parsed = raw.map(parseCommit);
+  const groups = groupCommits(parsed);
+  const breaking = getBreakingChanges(parsed);
+  const ver = suggestVersion({ commits: parsed, currentVersion: from ?? '0.0.0' }).version;
+  const repoUrl = getRepoRemoteUrl(cwd);
+  const md = formatKeepAChangelog({
+    version: ver,
+    date: new Date().toISOString().slice(0, 10),
+    groups,
+    breaking,
+    repoUrl,
+  });
+  const res = updateChangelogFile({ cwd, changelogContent: md });
+  console.log(`✅ Successfully updated ${res.filePath} (${res.isNew ? 'New' : 'Prepended'})`);
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// MCP Server Initialization
+// ---------------------------------------------------------------------------
 
 const server = new Server(
   { name: 'changelog-pilot', version: '1.0.0' },
@@ -67,6 +157,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             enum: ['keepachangelog', 'github', 'simple'],
             description: 'Output format (default: keepachangelog).',
+          },
+        },
+      },
+    },
+    {
+      name: 'update_changelog_file',
+      description:
+        'Write or prepend a formatted changelog entry into CHANGELOG.md, preserving existing version history.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          cwd: { type: 'string', description: 'Working directory of the git repository.' },
+          from: { type: 'string', description: 'Start ref (defaults to latest tag).' },
+          to: { type: 'string', description: 'End ref (defaults to HEAD).' },
+          version: {
+            type: 'string',
+            description: 'Version string for the changelog entry. Auto-suggested if not provided.',
+          },
+          format: {
+            type: 'string',
+            enum: ['keepachangelog', 'github', 'simple'],
+            description: 'Output format (default: keepachangelog).',
+          },
+          file_path: {
+            type: 'string',
+            description: 'Target changelog file path (default: CHANGELOG.md).',
           },
         },
       },
@@ -201,6 +317,7 @@ async function handleGenerateChangelog(args: Record<string, unknown>) {
         groups,
         breaking: breakingChanges,
         contributors,
+        repoUrl,
       });
       break;
     case 'simple':
@@ -224,6 +341,73 @@ async function handleGenerateChangelog(args: Record<string, unknown>) {
 
   return {
     content: [{ type: 'text' as const, text: markdown }],
+  };
+}
+
+async function handleUpdateChangelogFile(args: Record<string, unknown>) {
+  const cwd = (args.cwd as string) || process.cwd();
+  const from = (args.from as string) || (getLatestTag(cwd) ?? undefined);
+  const to = (args.to as string) || 'HEAD';
+  const format = ((args.format as string) || 'keepachangelog') as ChangelogFormat;
+  const filePath = (args.file_path as string) || 'CHANGELOG.md';
+
+  const rawCommits = getGitLog({ cwd, from, to });
+  const parsed: ParsedCommit[] = rawCommits.map(parseCommit);
+  const groups: CommitGroup[] = groupCommits(parsed);
+  const breakingChanges = getBreakingChanges(parsed);
+  const repoUrl = getRepoRemoteUrl(cwd);
+  const contributors = [
+    ...new Set(rawCommits.map((c: RawCommit) => c.author)),
+  ].sort();
+  const date = new Date().toISOString().slice(0, 10);
+
+  const version =
+    (args.version as string) ||
+    suggestVersion({ commits: parsed, currentVersion: from ?? '0.0.0' }).version;
+
+  let markdown: string;
+  switch (format) {
+    case 'github':
+      markdown = formatGitHubRelease({
+        version,
+        groups,
+        breaking: breakingChanges,
+        contributors,
+        repoUrl,
+      });
+      break;
+    case 'simple':
+      markdown = formatSimple({
+        version,
+        date,
+        groups,
+      });
+      break;
+    case 'keepachangelog':
+    default:
+      markdown = formatKeepAChangelog({
+        version,
+        date,
+        groups,
+        breaking: breakingChanges,
+        repoUrl,
+      });
+      break;
+  }
+
+  const result = updateChangelogFile({
+    cwd,
+    changelogContent: markdown,
+    filePath,
+  });
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: `✅ Successfully ${result.isNew ? 'created' : 'updated'} ${result.filePath} for version ${version}`,
+      },
+    ],
   };
 }
 
@@ -371,6 +555,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleAnalyzeCommits(args);
       case 'generate_changelog':
         return await handleGenerateChangelog(args);
+      case 'update_changelog_file':
+        return await handleUpdateChangelogFile(args);
       case 'suggest_version':
         return await handleSuggestVersion(args);
       case 'generate_release_notes':

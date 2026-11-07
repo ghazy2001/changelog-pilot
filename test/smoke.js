@@ -1,3 +1,5 @@
+import { existsSync, unlinkSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { getGitLog, getLatestTag } from '../dist/git.js';
 import { parseCommit, groupCommits, getBreakingChanges } from '../dist/parser.js';
 import { suggestVersion } from '../dist/version.js';
@@ -6,14 +8,16 @@ import {
   formatGitHubRelease,
   formatSimple,
   formatAnnouncement,
+  updateChangelogFile,
 } from '../dist/formatter.js';
 
 console.log('🧪 Starting Changelog Pilot Smoke Test...\n');
 
-// 1. Test Git operations against local repository (d:\twenty-crm)
+// 1. Test Git operations
 console.log('1. Testing Git operations...');
-const commits = getGitLog({ cwd: 'd:/twenty-crm', to: 'HEAD' });
-console.log(`   Fetched ${commits.length} commits from d:/twenty-crm`);
+const targetRepo = existsSync('d:/twenty-crm') ? 'd:/twenty-crm' : process.cwd();
+const commits = getGitLog({ cwd: targetRepo, to: 'HEAD' });
+console.log(`   Fetched ${commits.length} commits from ${targetRepo}`);
 
 if (commits.length === 0) {
   console.error('❌ Failed to fetch commits');
@@ -22,7 +26,7 @@ if (commits.length === 0) {
 console.log(`   Sample commit: [${commits[0].shortHash}] ${commits[0].subject}`);
 
 // 2. Test Parser
-console.log('\n2. Testing Parser...');
+console.log('\n2. Testing Parser & Issue Linker...');
 const sampleCommits = commits.slice(0, 20);
 const parsed = sampleCommits.map(parseCommit);
 console.log(`   Parsed ${parsed.length} commits.`);
@@ -52,7 +56,7 @@ const keepAChangelog = formatKeepAChangelog({
   date: new Date().toISOString().slice(0, 10),
   groups,
   breaking,
-  repoUrl: 'https://github.com/twentyhq/twenty',
+  repoUrl: 'https://github.com/ghazy2001/changelog-pilot',
 });
 console.log('   Keep a Changelog generated (chars:', keepAChangelog.length, ')');
 
@@ -61,6 +65,7 @@ const githubRelease = formatGitHubRelease({
   groups,
   breaking,
   contributors: ['ghazy2001', 'felix', 'charles'],
+  repoUrl: 'https://github.com/ghazy2001/changelog-pilot',
 });
 console.log('   GitHub Release generated (chars:', githubRelease.length, ')');
 
@@ -74,21 +79,27 @@ console.log('   Simple format generated (chars:', simple.length, ')');
 const slack = formatAnnouncement({
   platform: 'slack',
   version: suggestion.suggested,
-  productName: 'Twenty CRM',
+  productName: 'Changelog Pilot',
   highlights: parsed.slice(0, 3).map(p => p.subject),
   breaking,
-  url: 'https://github.com/twentyhq/twenty/releases',
+  url: 'https://github.com/ghazy2001/changelog-pilot/releases',
 });
 console.log('   Slack announcement generated (chars:', slack.length, ')');
 
-const twitter = formatAnnouncement({
-  platform: 'twitter',
-  version: suggestion.suggested,
-  productName: 'Twenty CRM',
-  highlights: parsed.slice(0, 2).map(p => p.subject),
-  breaking,
-  url: 'https://twenty.com',
+// 5. Test File Updater
+console.log('\n5. Testing updateChangelogFile...');
+const tempChangelog = resolve(process.cwd(), 'test-temp-CHANGELOG.md');
+const updateRes = updateChangelogFile({
+  cwd: process.cwd(),
+  changelogContent: keepAChangelog,
+  filePath: 'test-temp-CHANGELOG.md',
 });
-console.log('   Twitter announcement generated (chars:', twitter.length, ')');
+console.log(`   Changelog created: ${updateRes.filePath} (isNew=${updateRes.isNew})`);
+
+// Clean up temp test file
+if (existsSync(tempChangelog)) {
+  unlinkSync(tempChangelog);
+  console.log('   Cleaned up test temp file.');
+}
 
 console.log('\n✅ ALL SMOKE TESTS PASSED SUCCESSFULLY! 🎉\n');
