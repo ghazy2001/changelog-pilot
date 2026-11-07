@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "changelog-pilot": {
+      "command": "npx",
+      "args": ["-y", "changelog-pilot"]
+    }
+  }
+}
