@@ -24,7 +24,7 @@ function stripLeadingV(version: string): string {
  * Returns [major, minor, patch]. Defaults to [0, 0, 0] on invalid input.
  */
 function parseSemver(version: string): [number, number, number] {
-  const clean = stripLeadingV(version);
+  const clean = stripLeadingV(version).split('+')[0].split('-')[0];
   const parts = clean.split('.').map(Number);
   const major = Number.isFinite(parts[0]) ? parts[0] : 0;
   const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
